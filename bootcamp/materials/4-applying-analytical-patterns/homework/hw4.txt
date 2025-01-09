@@ -1,0 +1,231 @@
+-----------------------------------------------
+-- Question 1: Create a State Tracking Query for Players
+-- A player entering the league should be New
+-- A player leaving the league should be Retired
+-- A player staying in the league should be Continued Playing
+-- A player that comes out of retirement should be Returned from Retirement
+-- A player that stays out of the league should be Stayed Retired
+------------------------------------------------
+
+-- DDL for players growth accounting
+-- CREATE TABLE players_growth_accounting ( 
+-- 	player_name TEXT, 
+-- 	current_year INT, 
+-- 	first_active_year INT, 
+-- 	last_active_year INT, 
+-- 	player_state TEXT, 
+-- 	years_active INT[], 
+-- 	PRIMARY KEY (player_name, current_year) 	
+-- 	)
+
+-- State Tracking Cumulative table design for players growth accounting
+-- INSERT INTO players_growth_accounting
+-- WITH yesterday AS (
+-- 	SELECT * FROM players_growth_accounting
+-- 	WHERE current_year = 2005
+-- ), 
+
+-- today AS (
+-- 	SELECT
+-- 		player_name, 
+-- 		season AS current_year
+-- 	FROM player_seasons
+-- 	WHERE season = 2006
+-- )
+
+-- SELECT 
+-- 	COALESCE(t.player_name, y.player_name) AS player_name, 
+-- 	COALESCE(t.current_year, y.current_year + 1) AS current_year, 
+-- 	COALESCE(y.first_active_year, t.current_year) AS first_active_year, 
+-- 	COALESCE(t.current_year, y.last_active_year) AS last_active_year, 
+-- 	CASE
+-- 		WHEN y.player_name IS NULL THEN 'New'
+-- 		WHEN t.player_name IS NULL AND y.current_year <> y.last_active_year THEN 'Stayed Retired'
+-- 		WHEN t.current_year - y.last_active_year = 1 THEN 'Continued Playing'
+-- 		WHEN t.current_year - y.last_active_year > 1 THEN 'Returned From Retirement'
+-- 		ELSE 'Retired' END AS player_state,
+-- 	CASE
+-- 		WHEN t.current_year IS NULL THEN y.years_active
+-- 		WHEN y.years_active IS NULL THEN ARRAY[t.current_year]
+-- 		ELSE y.years_active || ARRAY[t.current_year] END AS years_active
+		
+-- 	FROM yesterday y 
+-- 	FULL OUTER JOIN today t
+-- 	ON y.player_name = t.player_name
+
+-- Michael Jordan Example: 
+	-- SELECT * FROM players_growth_accounting
+	-- where current_year = '2006' AND player_name = 'Michael Jordan'
+
+-------------------------------------------------------
+-- Question 2: Create a Grouping Set Query for Game Details
+-- Aggregate this dataset along the following dimensions
+-- 	player and team
+-- 		Answer questions like who scored the most points playing for one team?
+-- 	player and season
+-- 		Answer questions like who scored the most points in one season?
+-- 	team
+-- 		Answer questions like which team has won the most games?
+-------------------------------------------------------
+DROP TABLE game_group_set; 
+CREATE TABLE game_group_set (
+	aggregatation_level TEXT, 
+	player TEXT,
+	season TEXT,
+	team TEXT, 
+	total_pts INT,
+	winner TEXT, 
+	total_count INT
+);
+	
+
+-- INSERT INTO TABLE game_group_set 
+INSERT INTO game_group_set
+WITH game_info AS (
+	SELECT 
+		g.game_id,
+		g.season,
+		gd.player_name as player,
+		gd.team_abbreviation as team,
+		COALESCE(gd.pts, 0) AS pts,
+		CASE 
+			WHEN g.home_team_wins = 1 AND g.home_team_id = gd.team_id THEN 1
+			WHEN g.home_team_wins = 0 AND g.home_team_id = gd.team_id THEN 0 
+			WHEN g.home_team_wins = 0 AND g.home_team_id <> gd.team_id THEN 1
+			ELSE 0 
+		END AS winner
+	FROM games AS g
+	LEFT JOIN game_details gd
+	ON g.game_id = gd.game_id
+)
+
+Select 
+	CASE 
+		WHEN GROUPING(player) = 0 AND GROUPING(team) = 0 THEN 'player_team'
+		WHEN GROUPING(season) = 0 AND GROUPING(player) = 0 THEN 'player_season'
+		WHEN GROUPING(team) = 0 THEN 'team'
+	END AS aggregatation_level, 
+	 COALESCE(player, 'overall') AS player, 
+	 COALESCE(CAST(season AS TEXT), 'overall') AS season, 
+	 COALESCE(team, 'overall') AS team, 
+	SUM(pts) AS total_pts,
+	SUM(winner) AS winner, 
+	COUNT(1) AS total_count
+	FROM game_info
+	GROUP BY GROUPING SETS (
+		(player, team),
+		(player, season),
+		(team)
+	)
+-- Player with the most points on their team
+Select * FROM game_group_set
+where aggregatation_level = 'player_team'
+ORDER BY total_pts DESC
+LIMIT 1
+
+-- Player with the most points in a season
+Select * FROM game_group_set
+where aggregatation_level = 'player_season' 
+ORDER BY total_pts DESC
+LIMIT 1
+
+-- Team with the most games won
+-- Player with the most points in a season
+Select * FROM game_group_set
+where aggregatation_level = 'team' 
+ORDER BY winner DESC
+LIMIT 1
+
+-----------------------------------
+-- 3. A query that uses window functions on game_details to find out the following things: 
+-- 		What is the most games a team has won in a 90 game stretch? 
+--      How many games in a row did LeBron James score over 10 points in a game? 
+-----------------------------------
+-- 90 Game Stretch
+WITH game_info AS (
+    SELECT 
+        g.game_id,
+        g.season,
+        gd.player_name AS player,
+        gd.team_abbreviation AS team,
+        g.game_date_est,
+        CASE 
+            WHEN g.home_team_wins = 1 AND g.home_team_id = gd.team_id THEN 1
+            WHEN g.home_team_wins = 0 AND g.home_team_id = gd.team_id THEN 0 
+            WHEN g.home_team_wins = 0 AND g.home_team_id <> gd.team_id THEN 1
+            ELSE 0 
+        END AS winner
+    FROM games AS g
+    LEFT JOIN game_details gd
+    ON g.game_id = gd.game_id
+),
+cumulative_wins AS (
+    SELECT 
+        team,
+        game_date_est,
+        ROW_NUMBER() OVER (PARTITION BY team ORDER BY game_date_est) AS game_number,
+        SUM(winner) OVER (
+            PARTITION BY team 
+            ORDER BY game_date_est 
+            ROWS BETWEEN 89 PRECEDING AND CURRENT ROW
+        ) AS wins_in_90_games
+    FROM 
+        game_info
+)
+SELECT 
+    team,
+    MAX(wins_in_90_games) AS max_wins_in_90_games
+FROM 
+    cumulative_wins
+GROUP BY 
+    team
+ORDER BY 
+    max_wins_in_90_games DESC;
+
+
+-- Lebron James 10 point games
+WITH game_info AS (
+	SELECT 
+		g.game_id,
+		g.season,
+		gd.player_name as player,
+		gd.team_abbreviation as team,
+		g.game_date_est,
+		CASE 
+			WHEN g.home_team_wins = 1 AND g.home_team_id = gd.team_id THEN 1
+			WHEN g.home_team_wins = 0 AND g.home_team_id = gd.team_id THEN 0 
+			WHEN g.home_team_wins = 0 AND g.home_team_id <> gd.team_id THEN 1
+			ELSE 0 
+		END AS winner, 
+		gd.pts
+	FROM games AS g
+	LEFT JOIN game_details gd
+	ON g.game_id = gd.game_id
+),
+ streaks AS (
+    SELECT 
+        player,
+        game_id,
+        game_date_est,
+        pts,
+        -- Flag games where LeBron scored 10+ points
+        CASE WHEN pts >= 10 THEN 1 ELSE 0 END AS scored_10_plus,
+        -- Create a streak identifier
+        ROW_NUMBER() OVER (PARTITION BY player ORDER BY game_date_est) 
+        - SUM(CASE WHEN pts >= 10 THEN 1 ELSE 0 END) OVER (
+            PARTITION BY player ORDER BY game_date_est
+        ) AS streak_id
+    FROM game_info
+    WHERE player = 'LeBron James'
+)
+SELECT 
+    player,
+    streak_id,
+    COUNT(*) AS games_in_streak,
+    MIN(game_date_est) AS streak_start,
+    MAX(game_date_est) AS streak_end
+FROM streaks
+WHERE scored_10_plus = 1
+GROUP BY player, streak_id
+ORDER BY games_in_streak DESC
+LIMIT 1;

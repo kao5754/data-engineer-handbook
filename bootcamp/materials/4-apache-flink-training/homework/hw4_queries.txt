@@ -1,0 +1,37 @@
+-- Calculate the average number of web events of a session from a user on Tech Creator: 
+-- Answer: The average number of hits for the most IP addresses is 1 or 2, but there are many users that have multiple hits. 
+SELECT ip, host, event_window_timestamp, CAST(AVG(num_hits) AS INTEGER) as average_num_hits
+FROM processed_events_ip_aggregated
+WHERE host LIKE '%techcreator.io'
+GROUP BY ip, host, event_window_timestamp
+
+
+-- Compare results between different hosts (zachwilson.techcreator.io, zachwilson.tech, lulu.techcreator.io)
+-- dataexpert.io, bootcamp.techcreator.io both have the most hits to their site, whereas the others sites do not have hits over the session window. 
+SELECT ip, host, event_window_timestamp, CAST(AVG(num_hits) AS INTEGER) as average_num_hits
+FROM processed_events_ip_aggregated
+WHERE host = 'zachwilson.techcreator.io'
+GROUP BY ip, host, event_window_timestamp
+
+UNION ALL 
+
+SELECT ip, host, event_window_timestamp, CAST(AVG(num_hits) AS INTEGER) as average_num_hits
+FROM processed_events_ip_aggregated
+WHERE host = 'www.dataexpert.io'
+GROUP BY ip, host, event_window_timestamp
+
+UNION ALL 
+
+SELECT ip, host, event_window_timestamp, CAST(AVG(num_hits) AS INTEGER) as average_num_hits
+FROM processed_events_ip_aggregated
+WHERE host = 'zachwilson.tech'
+GROUP BY ip, host, event_window_timestamp
+
+UNION ALL 
+
+SELECT ip, host, event_window_timestamp, CAST(AVG(num_hits) AS INTEGER) as average_num_hits
+FROM processed_events_ip_aggregated
+WHERE host = 'lulu.techcreator.io'
+GROUP BY ip, host, event_window_timestamp
+
+
